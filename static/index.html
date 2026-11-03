@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Beyond Lock-In Chat</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>Beyond Lock-In Chat</h1>
+    <div id="conn" class="badge">연결 중…</div>
+  </header>
+
+  <main>
+    <section id="chat">
+      <ol id="messages"></ol>
+      <form id="composer" autocomplete="off">
+        <input id="author" maxlength="40" placeholder="이름">
+        <input id="body" maxlength="500" placeholder="메시지를 입력하세요" required>
+        <button type="submit">보내기</button>
+      </form>
+    </section>
+
+    <aside id="panel">
+      <h2>검증</h2>
+      <dl>
+        <dt>이 브라우저가 보낸 메시지</dt><dd id="v-sent">0</dd>
+        <dt>서버 저장 확인</dt><dd id="v-acked">0</dd>
+        <dt>스트림으로 수신</dt><dd id="v-seen">0</dd>
+        <dt>전송 대기 중</dt><dd id="v-pending">0</dd>
+        <dt>재접속 횟수</dt><dd id="v-reconnects">0</dd>
+      </dl>
+      <button id="verify" type="button">DB와 대조하기</button>
+      <p id="v-result"></p>
+
+      <h2>전체 메시지</h2>
+      <dl id="stats"></dl>
+
+      <h2>범례</h2>
+      <ul class="legend">
+        <li><span class="dot db-pg-a"></span>pg-a에 저장</li>
+        <li><span class="dot db-pg-b"></span>pg-b에 저장</li>
+      </ul>
+    </aside>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

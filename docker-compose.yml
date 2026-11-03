@@ -1,0 +1,36 @@
+# 데모 앱 로컬 실행: CDC PoC(pg-a, pg-b, PgBouncer) 위에 앱 2개(env-a, env-b)와 HAProxy를 올린다
+#   docker compose up -d --build
+#   브라우저: http://localhost:8080   HAProxy 통계: http://localhost:8404
+name: cdc-poc   # PoC와 같은 프로젝트 이름을 써서 PoC 스크립트(toolbox)와 같은 네트워크를 공유한다
+
+include:
+  - ../poc/cdc/docker-compose.yml
+
+x-app: &app
+  build: .
+  depends_on:
+    pgbouncer: { condition: service_started }
+  restart: unless-stopped
+
+services:
+  app-a:
+    <<: *app
+    environment:
+      ENV_NAME: env-a
+      DATABASE_URL: postgresql://app:app@pgbouncer:6432/app
+
+  app-b:
+    <<: *app
+    environment:
+      ENV_NAME: env-b
+      DATABASE_URL: postgresql://app:app@pgbouncer:6432/app
+
+  haproxy:
+    image: haproxy:3.0
+    depends_on: [app-a, app-b]
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "8080:8080"
+      - "8404:8404"
+      - "127.0.0.1:9999:9999"
