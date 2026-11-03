@@ -54,6 +54,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err := store.Migrate(ctx); err != nil {
+		log.Fatal(err)
+	}
 	hub := newHub(store, time.Duration(pollMS)*time.Millisecond)
 	hubCtx, stopHub := context.WithCancel(context.Background())
 	go hub.Run(hubCtx)

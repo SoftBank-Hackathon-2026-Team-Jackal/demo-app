@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"log"
@@ -10,6 +11,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+//go:embed db/schema.sql
+var schemaSQL string
+
+// 여러 인스턴스가 동시에 시작할 때 스키마 적용이 겹치지 않게 하는 advisory lock 키
+const migrateLockKey = 7_420_000
 
 // 채팅방 쓰기를 직렬화하는 advisory lock 키.
 // 동시에 들어온 INSERT의 id 순서와 커밋 순서가 어긋나면, "id > 마지막으로 본 id"로 조회하는
@@ -62,6 +69,23 @@ func newStore(ctx context.Context, url string) (*Store, error) {
 		log.Printf("waiting for database: %v", err)
 		time.Sleep(time.Second)
 	}
+}
+
+// Migrate는 스키마를 적용한다. CREATE ... IF NOT EXISTS라서 테이블이 이미 있으면 카탈로그를
+// 바꾸지 않으므로, 이전 도중(DDL 금지 구간)에 앱이 재시작되어도 안전하다.
+func (s *Store) Migrate(ctx context.Context) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrateLockKey); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, schemaSQL); err != nil {
+		return fmt.Errorf("apply schema: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 func scanMsg(row pgx.Row, m *Message) error {

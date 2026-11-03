@@ -1,36 +1,26 @@
-# 데모 앱 로컬 실행: CDC PoC(pg-a, pg-b, PgBouncer) 위에 앱 2개(env-a, env-b)와 HAProxy를 올린다
-#   docker compose up -d --build
-#   브라우저: http://localhost:8080   HAProxy 통계: http://localhost:8404
-name: cdc-poc   # PoC와 같은 프로젝트 이름을 써서 PoC 스크립트(toolbox)와 같은 네트워크를 공유한다
-
-include:
-  - ../poc/cdc/docker-compose.yml
-
-x-app: &app
-  build: .
-  depends_on:
-    pgbouncer: { condition: service_started }
-  restart: unless-stopped
-
+# 개발용: Postgres 하나에 앱을 바로 붙인다. 이전 리허설 환경은 Finals 저장소의 poc/demo를 쓴다.
+#   docker compose up -d --build   →  http://localhost:8080
 services:
-  app-a:
-    <<: *app
+  db:
+    image: postgres:16
+    # db_node 표시용 노드 이름. 실제 환경에서는 DB 운영 쪽에서 서버마다 설정한다
+    command: ["postgres", "-c", "app.node_name=pg-dev"]
     environment:
-      ENV_NAME: env-a
-      DATABASE_URL: postgresql://app:app@pgbouncer:6432/app
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
+      interval: 2s
+      retries: 30
 
-  app-b:
-    <<: *app
+  app:
+    build: .
+    # 종료 시 DRAIN_DELAY(3초) + 진행 중인 요청 정리 시간을 보장한다
+    stop_grace_period: 20s
+    depends_on:
+      db: { condition: service_healthy }
     environment:
-      ENV_NAME: env-b
-      DATABASE_URL: postgresql://app:app@pgbouncer:6432/app
-
-  haproxy:
-    image: haproxy:3.0
-    depends_on: [app-a, app-b]
-    volumes:
-      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      ENV_NAME: dev
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/app
     ports:
       - "8080:8080"
-      - "8404:8404"
-      - "127.0.0.1:9999:9999"

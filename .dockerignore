@@ -1,5 +1,3 @@
 agents/
-scripts/
-haproxy/
-db/
 *.md
+.github/
