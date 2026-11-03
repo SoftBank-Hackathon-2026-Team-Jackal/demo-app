@@ -23,13 +23,14 @@ const migrateLockKey = 7_420_000
 // 폴링이 늦게 커밋된 작은 id를 영영 건너뛴다. 채팅의 쓰기량에서는 직렬화 비용이 무시할 만하다.
 const chatLockKey = 7_420_001
 
-const msgCols = "id, client_msg_id, author, body, app_env, db_node, created_at"
+const msgCols = "id, client_msg_id, author, body, translation, app_env, db_node, created_at"
 
 type Message struct {
 	ID          int64     `json:"id"`
 	ClientMsgID string    `json:"client_msg_id"`
 	Author      string    `json:"author"`
 	Body        string    `json:"body"`
+	Translation *string   `json:"translation,omitempty"`
 	AppEnv      string    `json:"app_env"`
 	DBNode      string    `json:"db_node"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -89,7 +90,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 }
 
 func scanMsg(row pgx.Row, m *Message) error {
-	return row.Scan(&m.ID, &m.ClientMsgID, &m.Author, &m.Body, &m.AppEnv, &m.DBNode, &m.CreatedAt)
+	return row.Scan(&m.ID, &m.ClientMsgID, &m.Author, &m.Body, &m.Translation, &m.AppEnv, &m.DBNode, &m.CreatedAt)
 }
 
 func scanMsgs(rows pgx.Rows) ([]Message, error) {
@@ -107,7 +108,7 @@ func scanMsgs(rows pgx.Rows) ([]Message, error) {
 
 // Insert는 메시지를 저장한다. 같은 client_msg_id로 다시 들어오면 새로 저장하지 않고
 // 기존 행을 돌려준다 (created=false). 그래서 클라이언트는 실패 시 안심하고 재전송할 수 있다.
-func (s *Store) Insert(ctx context.Context, clientMsgID, author, body, appEnv string) (m Message, created bool, err error) {
+func (s *Store) Insert(ctx context.Context, clientMsgID, author, body string, translation *string, appEnv string) (m Message, created bool, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return m, false, err
@@ -118,11 +119,11 @@ func (s *Store) Insert(ctx context.Context, clientMsgID, author, body, appEnv st
 		return m, false, err
 	}
 	err = scanMsg(tx.QueryRow(ctx,
-		`INSERT INTO chat_messages (client_msg_id, author, body, app_env)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO chat_messages (client_msg_id, author, body, translation, app_env)
+		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (client_msg_id) DO NOTHING
 		 RETURNING `+msgCols,
-		clientMsgID, author, body, appEnv), &m)
+		clientMsgID, author, body, translation, appEnv), &m)
 	created = true
 	if errors.Is(err, pgx.ErrNoRows) {
 		created = false

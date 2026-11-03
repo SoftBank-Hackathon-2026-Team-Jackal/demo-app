@@ -124,6 +124,7 @@ type postReq struct {
 	ClientMsgID string `json:"client_msg_id"`
 	Author      string `json:"author"`
 	Body        string `json:"body"`
+	Translation string `json:"translation"`
 }
 
 func (s *server) postMessage(w http.ResponseWriter, r *http.Request) {
@@ -134,6 +135,7 @@ func (s *server) postMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Author = strings.TrimSpace(req.Author)
 	req.Body = strings.TrimSpace(req.Body)
+	req.Translation = strings.TrimSpace(req.Translation)
 	switch {
 	case len(req.ClientMsgID) < 8 || len(req.ClientMsgID) > 64:
 		httpError(w, http.StatusBadRequest, "client_msg_id must be 8-64 chars")
@@ -144,12 +146,19 @@ func (s *server) postMessage(w http.ResponseWriter, r *http.Request) {
 	case req.Body == "" || utf8.RuneCountInString(req.Body) > 500:
 		httpError(w, http.StatusBadRequest, "body must be 1-500 chars")
 		return
+	case utf8.RuneCountInString(req.Translation) > 1000:
+		httpError(w, http.StatusBadRequest, "translation must be at most 1000 chars")
+		return
+	}
+	var translation *string
+	if req.Translation != "" {
+		translation = &req.Translation
 	}
 
 	// DB 전환 중에는 PgBouncer가 쿼리를 잠시 대기시키므로 넉넉하게 기다린다
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	m, created, err := s.store.Insert(ctx, req.ClientMsgID, req.Author, req.Body, s.envName)
+	m, created, err := s.store.Insert(ctx, req.ClientMsgID, req.Author, req.Body, translation, s.envName)
 	if err != nil {
 		log.Printf("insert: %v", err)
 		httpError(w, http.StatusServiceUnavailable, "temporarily unavailable, retry with the same client_msg_id")

@@ -14,3 +14,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   db_node       text NOT NULL DEFAULT coalesce(current_setting('app.node_name', true), 'unknown'),
   created_at    timestamptz NOT NULL DEFAULT now()
 );
+
+-- 일본어 번역 (에이전트가 함께 보낸다. 사람이 보낸 메시지는 비어 있다).
+-- 컬럼이 이미 있으면 아무것도 바꾸지 않는다
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS translation text;

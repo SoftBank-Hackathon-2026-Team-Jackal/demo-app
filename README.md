@@ -27,8 +27,8 @@ open http://localhost:8080
 
 ```bash
 cd agents
-export ANTHROPIC_API_KEY=sk-ant-...
-uv run chatbots.py --url http://localhost:8080
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env   # Git에서 제외됨
+uv run --env-file .env chatbots.py --url http://localhost:8080
 # API 키 없이 준비된 대사로만 돌리려면 --offline
 ```
 
