@@ -289,8 +289,11 @@ def format_metrics(m: dict | None, chat: dict | None) -> str:
         if rep := m.get("replication"):
             lines.append(f"- CDC 복제 {rep['direction']}: {rep['phase']}, 복제 지연 {fmt_bytes(rep.get('lag_bytes'))}")
         if sw := m.get("last_switchover"):
-            lines.append(f"- 마지막 DB 전환: {sw['direction']}, {sw['seconds_ago']}초 전, 쓰기 중단 {sw['write_pause_ms']}ms "
-                         f"(그중 체크섬 검증 {sw.get('checksum_ms')}ms). 지금까지 전환 {m.get('switchover_count')}회")
+            detail = (f"전환 가능 시점까지 {sw.get('waited_for_ready_ms')}ms 기다림, 검증은 RESUME 후 "
+                      f"{'일치' if sw.get('verify_ok') else '불일치' if sw.get('verify_ok') is False else '생략'}"
+                      if sw.get("method", "").startswith("빠른") else f"그중 체크섬 검증 {sw.get('checksum_ms')}ms")
+            lines.append(f"- 마지막 DB 전환: {sw['direction']}, {sw.get('method', '')}, {sw['seconds_ago']}초 전, "
+                         f"쓰기 중단 {sw['write_pause_ms']}ms ({detail}). 지금까지 전환 {m.get('switchover_count')}회")
         else:
             lines.append("- DB 전환은 아직 한 번도 하지 않았다")
         if lg := m.get("db_load"):
@@ -300,6 +303,9 @@ def format_metrics(m: dict | None, chat: dict | None) -> str:
             lines.append("- 주문 서비스 부하 생성기는 멈춰 있다")
         if cm := m.get("chat_messages"):
             lines.append(f"- 채팅 메시지 누적 {cm.get('total')}건. 처리한 앱 {cm.get('by_app_env')}, 저장된 DB {cm.get('by_db_node')}")
+        if r := m.get("switchover_readiness"):
+            lines.append(f"- 지금 DB 전환 가능 시점인가: {'가능' if r.get('ready_now') else '대기 (' + ', '.join(r.get('not_ready_reasons') or []) + ')'}. "
+                         f"가장 긴 트랜잭션 {r.get('longest_xact_ms')}ms, 잠금 대기 {r.get('lock_waiters')}건, 초당 커밋 {r.get('commits_per_sec')}")
         if f := m.get("last_fault_test"):
             detail = ", ".join(f"{k}={v}" for k, v in f.items() if k not in ("name", "seconds_ago", "pass"))
             lines.append(f"- 마지막 장애 주입 시험(운영자가 일부러 일으킨 장애): {f['name']}, {f['seconds_ago']}초 전, "
