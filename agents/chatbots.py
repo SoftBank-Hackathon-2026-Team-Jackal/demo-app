@@ -300,6 +300,10 @@ def format_metrics(m: dict | None, chat: dict | None) -> str:
             lines.append("- 주문 서비스 부하 생성기는 멈춰 있다")
         if cm := m.get("chat_messages"):
             lines.append(f"- 채팅 메시지 누적 {cm.get('total')}건. 처리한 앱 {cm.get('by_app_env')}, 저장된 DB {cm.get('by_db_node')}")
+        if f := m.get("last_fault_test"):
+            detail = ", ".join(f"{k}={v}" for k, v in f.items() if k not in ("name", "seconds_ago", "pass"))
+            lines.append(f"- 마지막 장애 주입 시험(운영자가 일부러 일으킨 장애): {f['name']}, {f['seconds_ago']}초 전, "
+                         f"{'기대대로 버팀' if f.get('pass') else '기대와 다른 결과'} ({detail})")
     if chat:
         lines.append(f"- 채팅 전송 지연(에이전트가 직접 측정, 최근 60초 {chat['count']}건): p50 {chat['p50']}ms, p95 {chat['p95']}ms, 최대 {chat['max']}ms")
     return "\n".join(lines)
