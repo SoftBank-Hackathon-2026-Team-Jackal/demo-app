@@ -5,6 +5,8 @@
 
     uv run chatbots.py --url http://localhost:8080            # Claude로 대화
     uv run chatbots.py --url http://localhost:8080 --offline  # API 없이 준비된 대사로 대화
+    uv run chatbots.py --url http://localhost:8090 --metrics-url http://localhost:8091/api/metrics
+                                                              # 이전 리허설 제어판의 실측 지표를 보고 대화
 
 종료(Ctrl-C)하면 보낸 메시지, 저장 확인, 스트림 수신, 유실, 중복 집계를 출력한다.
 """
@@ -42,6 +44,10 @@ COMMON_RULES = """\
 - [시스템 알림]에 네 메시지가 사라졌다는 내용이 있으면 그 사실을 바로 지적한다.
 - 메시지는 한국어로 쓴다. 이름표나 따옴표 없이 네가 할 말만 쓴다.
 - 같은 이야기를 반복하지 말고, 대화가 한 주제에서 맴돌면 다른 화제로 넘어간다.
+- 숫자(지연 시간, 처리량, 건수, 용량, 시각)는 [실시간 지표]에 있는 값만 그대로 인용한다. 지표에 없는 숫자는 절대 지어내지 않는다.
+  지표가 없으면 숫자 없이 말한다. 지표를 매번 나열하지 말고 대화 흐름에 맞을 때 한두 개만 자연스럽게 언급한다.
+- 이전 순서: 먼저 앱 트래픽을 env-a에서 env-b로 옮기고(이 동안 env-b 앱이 pg-a DB에 쓰는 것은 정상이다), 그다음 DB를 pg-a에서 pg-b로 전환한다.
+  전환 후에는 롤백에 대비해 pg-b에서 pg-a로 역방향 복제가 계속 돈다. 이 순서를 사고로 착각하지 않는다.
 - ja에는 같은 메시지를 자연스러운 일본어 메신저 말투로 번역해 넣는다. 이모지는 그대로 둔다."""
 
 
@@ -125,6 +131,7 @@ class Sent:
 @dataclass
 class Room:
     base_url: str
+    metrics_url: str | None = None
     history: list[dict] = field(default_factory=list)
     last_id: int = 0
     ledger: dict[str, Sent] = field(default_factory=dict)
@@ -229,6 +236,24 @@ class Room:
                     log.warning("MISSING: %s %r (id=%s)", s.persona, s.body, s.msg_id)
                     self.note(s.persona, f"네가 보낸 메시지 \"{s.body}\"가 저장됐다고 응답받았는데 채팅방에 보이지 않는다.")
 
+    def post_latency_ms(self, window_s: float = 60) -> dict | None:
+        """최근 window_s초 동안 보낸 메시지가 저장 확인까지 걸린 시간 (사용자가 체감하는 전송 지연)."""
+        now = time.monotonic()
+        lat = sorted((s.acked_at - s.sent_at) * 1000 for s in self.ledger.values() if s.acked_at and now - s.acked_at <= window_s)
+        if not lat:
+            return None
+        pick = lambda q: round(lat[min(len(lat) - 1, int(len(lat) * q))])  # noqa: E731
+        return {"count": len(lat), "p50": pick(0.5), "p95": pick(0.95), "max": round(lat[-1])}
+
+    async def fetch_metrics(self, http: httpx.AsyncClient) -> dict | None:
+        if not self.metrics_url:
+            return None
+        try:
+            r = await http.get(self.metrics_url, timeout=1.5)
+            return r.json() if r.status_code == 200 else None
+        except (httpx.HTTPError, ValueError):
+            return None
+
     def summary(self) -> dict:
         acked = [c for c, s in self.ledger.items() if s.acked_at]
         seen = [c for c in self.ledger if c in self.seen_counts]
@@ -242,12 +267,51 @@ class Room:
         }
 
 
+def fmt_bytes(n) -> str:
+    if n is None:
+        return "-"
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(n) < 1024 or unit == "GB":
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024
+    return str(n)
+
+
+def format_metrics(m: dict | None, chat: dict | None) -> str:
+    """제어판 지표(/api/metrics)와 에이전트가 직접 잰 전송 지연을 프롬프트용 문장으로 만든다."""
+    lines = []
+    if m:
+        lines.append(f"- {m.get('time', '')} 기준 상황: {m.get('stage', '-')}")
+        apps = m.get("apps") or {}
+        lines.append("- 앱: " + ", ".join(
+            f"{a}(env-{a[-1]}) 트래픽 가중치 {v.get('weight')} 상태 {v.get('status')}" for a, v in apps.items()))
+        lines.append(f"- 주 DB(쓰기를 받는 DB): {m.get('primary_db')}")
+        if rep := m.get("replication"):
+            lines.append(f"- CDC 복제 {rep['direction']}: {rep['phase']}, 복제 지연 {fmt_bytes(rep.get('lag_bytes'))}")
+        if sw := m.get("last_switchover"):
+            lines.append(f"- 마지막 DB 전환: {sw['direction']}, {sw['seconds_ago']}초 전, 쓰기 중단 {sw['write_pause_ms']}ms "
+                         f"(그중 체크섬 검증 {sw.get('checksum_ms')}ms). 지금까지 전환 {m.get('switchover_count')}회")
+        else:
+            lines.append("- DB 전환은 아직 한 번도 하지 않았다")
+        if lg := m.get("db_load"):
+            lines.append(f"- 주문 서비스 DB 부하(최근 60초): 초당 {lg.get('tx_per_sec')}건, 지연 p50 {lg.get('p50_ms_60s')}ms, "
+                         f"p95 {lg.get('p95_ms_60s')}ms, p99 {lg.get('p99_ms_60s')}ms, 최대 {lg.get('max_ms_60s')}ms, 에러 {lg.get('errors_60s')}건")
+        else:
+            lines.append("- 주문 서비스 부하 생성기는 멈춰 있다")
+        if cm := m.get("chat_messages"):
+            lines.append(f"- 채팅 메시지 누적 {cm.get('total')}건. 처리한 앱 {cm.get('by_app_env')}, 저장된 DB {cm.get('by_db_node')}")
+    if chat:
+        lines.append(f"- 채팅 전송 지연(에이전트가 직접 측정, 최근 60초 {chat['count']}건): p50 {chat['p50']}ms, p95 {chat['p95']}ms, 최대 {chat['max']}ms")
+    return "\n".join(lines)
+
+
 class Speaker:
     """다음에 말할 에이전트를 고르고, 할 말을 만든다."""
 
     def __init__(self, room: Room, offline: bool):
         self.room = room
         self.offline = offline
+        self.http: httpx.AsyncClient | None = None
         self.client = None if offline else anthropic.AsyncAnthropic(max_retries=1, timeout=20)
 
     def pick(self) -> Persona:
@@ -276,12 +340,20 @@ class Speaker:
                 env, db = self.room.last_route[p.name]
                 return (f"오 방금 제 메시지는 {env} 앱 → {db} DB로 갔네요",
                         f"おっ、今のメッセージは {env} のアプリ → {db} のDBに行きましたね")
+            m = await self.room.fetch_metrics(self.http) if self.http else None
+            lg = (m or {}).get("db_load")
+            if lg and random.random() < 0.3:
+                return (f"지금 DB p95 {lg.get('p95_ms_60s')}ms, 에러 {lg.get('errors_60s')}건이에요 (최근 60초)",
+                        f"今のDBのp95は{lg.get('p95_ms_60s')}ms、エラー{lg.get('errors_60s')}件です（直近60秒）")
             return random.choice(p.fallback)
 
         transcript = "\n".join(
             f"[{m['app_env']} · {m['db_node']}] {m['author']}: {m['body']}" for m in self.room.history[-HISTORY_WINDOW:]
         ) or "(아직 대화가 없다. 네가 먼저 말을 꺼낸다.)"
         prompt = f"최근 채팅:\n{transcript}"
+        metrics = format_metrics(await self.room.fetch_metrics(self.http) if self.http else None, self.room.post_latency_ms())
+        if metrics:
+            prompt += f"\n\n[실시간 지표] (실제 측정값. 숫자는 여기 있는 것만 인용한다)\n{metrics}"
         if notes:
             prompt += "\n\n[시스템 알림]\n" + "\n".join(f"- {n}" for n in notes)
         if random.random() < TOPIC_NUDGE_RATE:
@@ -325,10 +397,11 @@ def strip_name(text: str, name: str) -> str:
     return text
 
 
-async def run(base_url: str, offline: bool, min_gap: float, max_gap: float) -> Room:
-    room = Room(base_url=base_url.rstrip("/"))
+async def run(base_url: str, offline: bool, min_gap: float, max_gap: float, metrics_url: str | None = None) -> Room:
+    room = Room(base_url=base_url.rstrip("/"), metrics_url=metrics_url)
     speaker = Speaker(room, offline)
     async with httpx.AsyncClient() as http:
+        speaker.http = http
         tasks = [asyncio.create_task(room.listen(http)), asyncio.create_task(room.watch_missing())]
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
@@ -355,6 +428,8 @@ async def run(base_url: str, offline: bool, min_gap: float, max_gap: float) -> R
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--url", default=os.environ.get("CHAT_URL", "http://localhost:8080"))
+    ap.add_argument("--metrics-url", default=os.environ.get("CHAT_METRICS_URL"),
+                    help="실측 지표 JSON 주소 (이전 리허설 제어판의 /api/metrics). 주면 에이전트가 이 수치로만 말한다")
     ap.add_argument("--offline", action="store_true", help="Claude API 없이 준비된 대사로 대화")
     ap.add_argument("--min-gap", type=float, default=3.0, help="발언 사이 최소 간격(초)")
     ap.add_argument("--max-gap", type=float, default=6.0, help="발언 사이 최대 간격(초)")
@@ -362,7 +437,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    room = asyncio.run(run(args.url, args.offline, args.min_gap, args.max_gap))
+    room = asyncio.run(run(args.url, args.offline, args.min_gap, args.max_gap, args.metrics_url))
     print(json.dumps(room.summary(), ensure_ascii=False, indent=2))
 
 
