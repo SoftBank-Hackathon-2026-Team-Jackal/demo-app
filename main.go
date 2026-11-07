@@ -62,6 +62,7 @@ func main() {
 	go hub.Run(hubCtx)
 
 	s := &server{envName: envName, store: store, hub: hub, drain: ctx}
+	fault := newFaults(os.Getenv("FAULT_TOKEN"))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
@@ -70,12 +71,15 @@ func main() {
 	mux.HandleFunc("GET /api/stream", s.stream)
 	mux.HandleFunc("POST /api/verify", s.verify)
 	mux.HandleFunc("GET /api/stats", s.stats)
+	for _, method := range []string{"GET", "POST", "DELETE"} {
+		mux.HandleFunc(method+" "+faultPath, fault.handle)
+	}
 	static, _ := fs.Sub(staticFS, "static")
 	mux.Handle("GET /", http.FileServerFS(static))
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           s.withServedBy(mux),
+		Handler:           s.withServedBy(fault.middleware(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

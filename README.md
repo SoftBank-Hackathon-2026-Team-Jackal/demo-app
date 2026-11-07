@@ -8,6 +8,7 @@ AI 에이전트들이 계속 대화하는 채팅방입니다. 메시지마다 **
 
 | 경로 | 내용 |
 |---|---|
+| `fault.go` | 이전 시연용 장애 스위치. 켜면 `/api/` 요청에 지연과 500을 낸다 |
 | `main.go` | HTTP 서버. `POST /api/messages`, `GET /api/stream`(SSE), `GET /api/messages`, `POST /api/verify`, `GET /api/stats`, `GET /healthz` |
 | `store.go` | pgx (PgBouncer transaction 모드에 맞춰 simple protocol 사용), 시작 시 스키마 적용 |
 | `hub.go` | DB를 150ms마다 조회해 새 메시지를 SSE 구독자에게 전달 |
@@ -43,8 +44,26 @@ uv run --env-file .env chatbots.py --url http://localhost:8080
 | `ADDR` | `:8080` | 수신 주소 |
 | `POLL_INTERVAL_MS` | `150` | 새 메시지 조회 주기 |
 | `DRAIN_DELAY` | `3s` | 종료 신호를 받은 뒤 로드 밸런서가 알아챌 때까지 기다리는 시간 |
+| `FAULT_TOKEN` | (비어 있음) | 장애 스위치(`/__cmp/fault`) 토큰. 비어 있으면 스위치가 없다(404) |
 
 DB 서버에 `app.node_name` 설정이 있으면 메시지의 `db_node`에 그 값이 기록됩니다 (예: `ALTER DATABASE app SET app.node_name = 'pg-a'`). 이 값은 앱이 아니라 DB 운영 쪽에서 서버마다 정합니다.
+
+## 장애 스위치 (이전 시연용)
+
+이전 뒤 안정화 구간에서 "새 환경의 앱이 오류를 낸다"는 상황을 일부러 만들 때 씁니다. 플랫폼이 원본과 대상의 오류율·p99를 비교해 알리고, 사람이 롤백을 승인하는 흐름을 시연합니다.
+
+- 켜면 `/api/` 요청(실시간 스트림 `/api/stream` 제외)에 `delay_ms`만큼 지연을 더하고, `error_rate` 비율만큼 500을 냅니다.
+- `/healthz`는 그대로 정상입니다. 헬스 체크는 통과하는데 사용자는 오류를 받는 상황이라 지표로만 알아챌 수 있습니다.
+- `FAULT_TOKEN`을 설정해야 스위치가 생기고, 요청에 같은 값의 `X-Fault-Token` 헤더가 있어야 합니다. 플랫폼 중계 서버(Envoy)는 공개 경로의 `/__cmp/`를 403으로 막으므로, 스위치는 대상 앱에 직접 붙어서만 켤 수 있습니다.
+- 켠 장애는 `duration_s`(기본 300초, 최대 900초)가 지나면 저절로 꺼집니다. 기본값은 꺼짐이라 설정하지 않으면 동작이 바뀌지 않습니다.
+
+```bash
+# 켜기: 요청의 50%에 500, 모든 요청에 800ms 지연, 2분 뒤 자동 해제
+curl -X POST -H "X-Fault-Token: $FAULT_TOKEN" http://<대상 앱>/__cmp/fault \
+  -d '{"error_rate":0.5,"delay_ms":800,"duration_s":120}'
+curl -H "X-Fault-Token: $FAULT_TOKEN" http://<대상 앱>/__cmp/fault             # 상태
+curl -X DELETE -H "X-Fault-Token: $FAULT_TOKEN" http://<대상 앱>/__cmp/fault   # 바로 끄기
+```
 
 ## 이미지
 
