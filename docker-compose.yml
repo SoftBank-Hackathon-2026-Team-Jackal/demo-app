@@ -22,5 +22,19 @@ services:
     environment:
       ENV_NAME: dev
       DATABASE_URL: postgresql://postgres:postgres@db:5432/app
+      # OpenTelemetry: 비우면 내보내지 않는다. 트레이스는 Jaeger(http://localhost:16686), 메트릭은 collector 로그
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_METRIC_EXPORT_INTERVAL: "5000"
     ports:
       - "8080:8080"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel/collector-dev.yaml:/etc/otelcol/config.yaml:ro
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.66.0
+    ports:
+      - "16686:16686"

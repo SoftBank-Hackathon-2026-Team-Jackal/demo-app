@@ -45,8 +45,28 @@ uv run --env-file .env chatbots.py --url http://localhost:8080
 | `POLL_INTERVAL_MS` | `150` | 새 메시지 조회 주기 |
 | `DRAIN_DELAY` | `3s` | 종료 신호를 받은 뒤 로드 밸런서가 알아챌 때까지 기다리는 시간 |
 | `FAULT_TOKEN` | (비어 있음) | 장애 스위치(`/__cmp/fault`) 토큰. 비어 있으면 스위치가 없다(404) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | (비어 있음) | OpenTelemetry OTLP/HTTP 수신 주소(예: `http://collector:4318`). 비어 있으면 아무것도 내보내지 않는다 |
 
 DB 서버에 `app.node_name` 설정이 있으면 메시지의 `db_node`에 그 값이 기록됩니다 (예: `ALTER DATABASE app SET app.node_name = 'pg-a'`). 이 값은 앱이 아니라 DB 운영 쪽에서 서버마다 정합니다.
+
+## OpenTelemetry
+
+`OTEL_EXPORTER_OTLP_ENDPOINT`를 설정하면 트레이스와 메트릭을 OTLP/HTTP로 내보냅니다. 트래픽 전환 판정은 중계 서버 Envoy의 카운터로 하고, 이 데이터는 앱 안쪽을 보여 주는 용도입니다.
+
+| 신호 | 내용 |
+|---|---|
+| 트레이스 | 요청마다 서버 span(이름은 `POST /api/messages` 같은 라우트)과 그 아래 DB span(`pool.acquire`, `query INSERT`…). DB span의 `server.address`로 원본 DB와 PgBouncer(`cmp-cutover`) 중 어디로 갔는지 보입니다 |
+| `http.server.request.duration` | 라우트(`http.route`)·상태 코드별 지연 히스토그램. 장애 스위치의 지연과 500도 여기에 잡힙니다 |
+| `db.client.operation.duration` | DB 쿼리 시간 |
+| `db.client.pool.*` | 커넥션 풀 사용·유휴 연결 수, 빈 풀 대기 횟수와 시간. DB 전환 중 PgBouncer PAUSE 동안 대기가 늘어나는 모습이 보입니다 |
+| `chat.messages.created` | 새로 저장된 메시지 수 |
+
+- `/healthz`(프로브)와 `/api/stream`(몇 분씩 유지되는 SSE)은 계측하지 않습니다.
+- 메시지 조회 루프(150ms마다 DB 조회)처럼 요청과 무관한 DB 호출은 트레이스로 남기지 않습니다.
+- 모든 리소스에 `service.name=chat-app`(`OTEL_SERVICE_NAME`으로 변경)과 `app.env=<ENV_NAME>`이 붙습니다.
+- 표준 환경 변수(`OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER` 등)를 따릅니다. `OTEL_TRACES_EXPORTER=none`이나 `OTEL_METRICS_EXPORTER=none`으로 한쪽만 끌 수 있습니다.
+
+개발 환경의 `docker compose`는 collector와 Jaeger를 함께 띄웁니다. 트레이스는 http://localhost:16686 에서 보고, 메트릭은 `docker compose logs otel-collector`에 찍힙니다.
 
 ## 장애 스위치 (이전 시연용)
 

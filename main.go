@@ -29,6 +29,7 @@ var staticFS embed.FS
 type server struct {
 	envName  string
 	store    *Store
+	metrics  *appMetrics
 	hub      *Hub
 	drain    context.Context // 종료 신호를 받으면 취소된다. SSE 연결을 닫아 다른 인스턴스로 재접속시킨다
 	draining atomic.Bool
@@ -50,6 +51,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	otelShutdown, err := setupOTel(ctx, envName)
+	if err != nil {
+		log.Printf("otel disabled: %v", err)
+	}
+
 	store, err := newStore(ctx, dbURL)
 	if err != nil {
 		log.Fatal(err)
@@ -61,7 +67,7 @@ func main() {
 	hubCtx, stopHub := context.WithCancel(context.Background())
 	go hub.Run(hubCtx)
 
-	s := &server{envName: envName, store: store, hub: hub, drain: ctx}
+	s := &server{envName: envName, store: store, hub: hub, drain: ctx, metrics: newAppMetrics(store.pool, envName)}
 	fault := newFaults(os.Getenv("FAULT_TOKEN"))
 
 	mux := http.NewServeMux()
@@ -79,7 +85,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           s.withServedBy(fault.middleware(mux)),
+		Handler:           instrumentHTTP(mux, s.withServedBy(fault.middleware(mux))),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -97,6 +103,11 @@ func main() {
 			log.Printf("shutdown: %v", err)
 		}
 		stopHub()
+		octx, ocancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer ocancel()
+		if err := otelShutdown(octx); err != nil {
+			log.Printf("otel shutdown: %v", err)
+		}
 	}()
 
 	log.Printf("demo-app env=%s listening on %s", envName, addr)
@@ -169,7 +180,9 @@ func (s *server) postMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := http.StatusCreated
-	if !created {
+	if created {
+		s.metrics.created.Add(r.Context(), 1)
+	} else {
 		status = http.StatusOK
 	}
 	writeJSON(w, status, m)
