@@ -1,6 +1,8 @@
 apiVersion: v1
 data:
   ENV_NAME: aws-eks
+  # 플랫폼(데모 서버)의 OTLP 수신 주소. 인증 헤더는 chat-secrets의 OTEL_EXPORTER_OTLP_HEADERS
+  OTEL_EXPORTER_OTLP_ENDPOINT: https://13.209.240.49.sslip.io/otlp
 kind: ConfigMap
 metadata:
   annotations: {}

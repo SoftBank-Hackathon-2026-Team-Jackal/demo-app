@@ -64,7 +64,8 @@ DB 서버에 `app.node_name` 설정이 있으면 메시지의 `db_node`에 그 �
 - `/healthz`(프로브)와 `/api/stream`(몇 분씩 유지되는 SSE)은 계측하지 않습니다.
 - 메시지 조회 루프(150ms마다 DB 조회)처럼 요청과 무관한 DB 호출은 트레이스로 남기지 않습니다.
 - 모든 리소스에 `service.name=chat-app`(`OTEL_SERVICE_NAME`으로 변경)과 `app.env=<ENV_NAME>`이 붙습니다.
-- 표준 환경 변수(`OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER` 등)를 따릅니다. `OTEL_TRACES_EXPORTER=none`이나 `OTEL_METRICS_EXPORTER=none`으로 한쪽만 끌 수 있습니다.
+- 코드가 직접 읽는 설정은 `OTEL_EXPORTER_OTLP_ENDPOINT` 하나입니다. 인증 헤더(`OTEL_EXPORTER_OTLP_HEADERS`) 같은 나머지 설정은 SDK가 표준 환경 변수로 읽습니다.
+- 메트릭은 5초마다 보냅니다.
 
 개발 환경의 `docker compose`는 collector와 Jaeger를 함께 띄웁니다. 트레이스는 http://localhost:16686 에서 보고, 메트릭은 `docker compose logs otel-collector`에 찍힙니다.
 

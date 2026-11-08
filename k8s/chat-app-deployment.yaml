@@ -21,6 +21,12 @@ spec:
             secretKeyRef:
               key: DATABASE_URL
               name: chat-secrets
+        - name: OTEL_EXPORTER_OTLP_HEADERS
+          valueFrom:
+            secretKeyRef:
+              key: OTEL_EXPORTER_OTLP_HEADERS
+              name: chat-secrets
+              optional: true
         envFrom:
         - configMapRef:
             name: chat-app-config

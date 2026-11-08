@@ -5,9 +5,9 @@ package main
 // 트래픽 전환 판정은 중계 서버 Envoy의 카운터로 하고, 여기서 내보내는 데이터는 앱 안쪽을 보여 주는 용도다:
 // 엔드포인트별 지연·상태 코드, DB 쿼리 시간과 어느 DB 주소(chat-db / PgBouncer)로 갔는지, 커넥션 풀 대기.
 //
-// 표준 환경 변수를 따른다: OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS, OTEL_SERVICE_NAME,
-// OTEL_RESOURCE_ATTRIBUTES, OTEL_METRIC_EXPORT_INTERVAL, OTEL_TRACES_SAMPLER(_ARG).
-// OTEL_TRACES_EXPORTER=none / OTEL_METRICS_EXPORTER=none 으로 한쪽만 끌 수 있다.
+// 코드가 직접 읽는 설정은 OTEL_EXPORTER_OTLP_ENDPOINT 하나다. 나머지(OTEL_EXPORTER_OTLP_HEADERS,
+// OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES 등)는 SDK가 표준 환경 변수로 읽는다.
+// 메트릭은 5초마다 보낸다(이전 단계 화면이 몇 초 단위로 바뀌므로 SDK 기본 60초는 너무 길다).
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -43,10 +44,9 @@ func setupOTel(ctx context.Context, envName string) (func(context.Context) error
 	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
 		return noop, nil
 	}
-	if os.Getenv("OTEL_SERVICE_NAME") == "" {
-		os.Setenv("OTEL_SERVICE_NAME", "chat-app")
-	}
+	// service.name 기본값은 chat-app이고 OTEL_SERVICE_NAME·OTEL_RESOURCE_ATTRIBUTES가 있으면 그 값이 이긴다
 	res, err := resource.Merge(resource.Default(), resource.NewSchemaless(
+		attribute.String("service.name", "chat-app"),
 		attribute.String("deployment.environment.name", envName),
 		attrAppEnv.String(envName),
 	))
@@ -68,7 +68,7 @@ func setupOTel(ctx context.Context, envName string) (func(context.Context) error
 
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 
-	if os.Getenv("OTEL_TRACES_EXPORTER") != "none" {
+	{
 		exp, err := otlptracehttp.New(ctx)
 		if err != nil {
 			return shutdown, err
@@ -81,12 +81,13 @@ func setupOTel(ctx context.Context, envName string) (func(context.Context) error
 		otel.SetTracerProvider(tp)
 		shutdowns = append(shutdowns, tp.Shutdown)
 	}
-	if os.Getenv("OTEL_METRICS_EXPORTER") != "none" {
+	{
 		exp, err := otlpmetrichttp.New(ctx)
 		if err != nil {
 			return shutdown, err
 		}
-		mp := sdkmetric.NewMeterProvider(sdkmetric.WithResource(res), sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp)))
+		reader := sdkmetric.NewPeriodicReader(exp, sdkmetric.WithInterval(5*time.Second))
+		mp := sdkmetric.NewMeterProvider(sdkmetric.WithResource(res), sdkmetric.WithReader(reader))
 		otel.SetMeterProvider(mp)
 		shutdowns = append(shutdowns, mp.Shutdown)
 	}

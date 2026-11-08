@@ -21,6 +21,13 @@ spec:
     - podSelector:
         matchLabels:
           app.kubernetes.io/name: cmp-cutover
+  # 플랫폼(데모 서버) OTLP 수신(HTTPS). 트레이스·메트릭만 보낸다
+  - ports:
+    - port: 443
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: 13.209.240.49/32
   - ports:
     - port: 53
       protocol: UDP
