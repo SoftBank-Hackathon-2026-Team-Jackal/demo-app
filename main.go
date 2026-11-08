@@ -74,6 +74,7 @@ func main() {
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("POST /api/messages", s.postMessage)
 	mux.HandleFunc("GET /api/messages", s.listMessages)
+	mux.HandleFunc("GET /api/search", s.searchMessages)
 	mux.HandleFunc("GET /api/stream", s.stream)
 	mux.HandleFunc("POST /api/verify", s.verify)
 	mux.HandleFunc("GET /api/stats", s.stats)
@@ -202,6 +203,24 @@ func (s *server) listMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, msgs)
 }
 
+// searchMessages는 작성자나 본문 일부로 메시지를 찾는다. 두 조건 모두 선택이며,
+// sort로 정렬 기준(author, created_at)을 바꿀 수 있다.
+func (s *server) searchMessages(w http.ResponseWriter, r *http.Request) {
+	author := r.URL.Query().Get("author")
+	q := r.URL.Query().Get("q")
+	sort := r.URL.Query().Get("sort")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	msgs, err := s.store.Search(r.Context(), author, q, sort, limit)
+	if err != nil {
+		httpError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, msgs)
+}
+
 // stream은 SSE로 메시지를 보낸다. 브라우저의 EventSource는 연결이 끊기면 자동으로 재접속하면서
 // 마지막으로 받은 id를 Last-Event-ID 헤더로 보내므로, 그 이후부터 이어서 보내면 빠지는 구간이 없다.
 func (s *server) stream(w http.ResponseWriter, r *http.Request) {
@@ -319,8 +338,10 @@ func (s *server) verify(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"checked": len(req.ClientMsgIDs), "missing": missing})
 }
 
+// stats는 전체 통계를 돌려준다. env 쿼리 파라미터를 주면 그 앱 환경으로만 좁힌다.
 func (s *server) stats(w http.ResponseWriter, r *http.Request) {
-	st, err := s.store.Stats(r.Context())
+	env := r.URL.Query().Get("env")
+	st, err := s.store.StatsByEnv(r.Context(), env)
 	if err != nil {
 		httpError(w, http.StatusServiceUnavailable, err.Error())
 		return

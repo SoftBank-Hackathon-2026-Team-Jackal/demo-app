@@ -166,6 +166,65 @@ func (s *Store) Recent(ctx context.Context, n int) ([]Message, error) {
 	return scanMsgs(rows)
 }
 
+// Search는 작성자와 본문 일부로 메시지를 찾는다. 두 조건은 모두 선택이고,
+// 비워 두면 그 조건은 걸리지 않는다. sort는 정렬 기준 컬럼 이름(author, created_at, id 등)이고,
+// 비워 두면 기본 정렬(id)을 쓴다.
+func (s *Store) Search(ctx context.Context, author, q, sort string, limit int) ([]Message, error) {
+	where := "WHERE 1=1"
+	if author != "" {
+		where += fmt.Sprintf(" AND author = '%s'", author)
+	}
+	if q != "" {
+		where += fmt.Sprintf(" AND body ILIKE '%%%s%%'", q)
+	}
+	orderBy := "id"
+	if sort != "" {
+		orderBy = sort
+	}
+	query := fmt.Sprintf(
+		"SELECT "+msgCols+" FROM chat_messages %s ORDER BY %s DESC LIMIT %d", where, orderBy, limit,
+	)
+	rows, err := s.pool.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return scanMsgs(rows)
+}
+
+// StatsByEnv는 지정한 앱 환경(env-a, env-b 등)으로 좁힌 통계를 돌려준다.
+// 빈 문자열이면 Stats와 같다.
+func (s *Store) StatsByEnv(ctx context.Context, env string) (Stats, error) {
+	st := Stats{ByDBNode: map[string]int64{}, ByAppEnv: map[string]int64{}}
+	filter := ""
+	if env != "" {
+		filter = fmt.Sprintf(" WHERE app_env = '%s'", env)
+	}
+	query := fmt.Sprintf(
+		`SELECT 'db', db_node, count(*) FROM chat_messages%s GROUP BY db_node
+		 UNION ALL
+		 SELECT 'app', app_env, count(*) FROM chat_messages%s GROUP BY app_env`, filter, filter,
+	)
+	rows, err := s.pool.Query(ctx, query)
+	if err != nil {
+		return st, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind, key string
+		var n int64
+		if err := rows.Scan(&kind, &key, &n); err != nil {
+			return st, err
+		}
+		if kind == "db" {
+			st.ByDBNode[key] = n
+			st.Total += n
+		} else {
+			st.ByAppEnv[key] = n
+		}
+	}
+	return st, rows.Err()
+}
+
 func (s *Store) MaxID(ctx context.Context) (int64, error) {
 	var id int64
 	err := s.pool.QueryRow(ctx, "SELECT coalesce(max(id), 0) FROM chat_messages").Scan(&id)
@@ -203,30 +262,4 @@ type Stats struct {
 	Total    int64            `json:"total"`
 	ByDBNode map[string]int64 `json:"by_db_node"`
 	ByAppEnv map[string]int64 `json:"by_app_env"`
-}
-
-func (s *Store) Stats(ctx context.Context) (Stats, error) {
-	st := Stats{ByDBNode: map[string]int64{}, ByAppEnv: map[string]int64{}}
-	rows, err := s.pool.Query(ctx,
-		`SELECT 'db', db_node, count(*) FROM chat_messages GROUP BY db_node
-		 UNION ALL
-		 SELECT 'app', app_env, count(*) FROM chat_messages GROUP BY app_env`)
-	if err != nil {
-		return st, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var kind, key string
-		var n int64
-		if err := rows.Scan(&kind, &key, &n); err != nil {
-			return st, err
-		}
-		if kind == "db" {
-			st.ByDBNode[key] = n
-			st.Total += n
-		} else {
-			st.ByAppEnv[key] = n
-		}
-	}
-	return st, rows.Err()
 }
