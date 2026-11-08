@@ -87,13 +87,28 @@ func setupOTel(ctx context.Context, envName string) (func(context.Context) error
 			return shutdown, err
 		}
 		reader := sdkmetric.NewPeriodicReader(exp, sdkmetric.WithInterval(5*time.Second))
-		mp := sdkmetric.NewMeterProvider(sdkmetric.WithResource(res), sdkmetric.WithReader(reader))
+		mp := sdkmetric.NewMeterProvider(sdkmetric.WithResource(res), sdkmetric.WithReader(reader), sdkmetric.WithView(dbDurationView))
 		otel.SetMeterProvider(mp)
 		shutdowns = append(shutdowns, mp.Shutdown)
 	}
 	log.Printf("otel: exporting to %s", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
 	return shutdown, nil
 }
+
+// dbDurationView: otelpgx v0.10은 db.client.operation.duration을 단위 "s"로 선언하면서 실제로는 밀리초 정수를
+// 기록하고, 버킷도 지정하지 않는다(SDK 기본값 0, 5, 10, 25…). 그대로 두면 단위가 1000배 틀린다. 그래서 이름과 단위를
+// 밀리초로 바로잡고(app.db.operation.duration, ms) 밀리초 경계를 준다. pgx_operation_type 라벨로
+// query(쿼리)·acquire(풀에서 연결 얻기)·connect를 나눈다.
+var dbDurationView = sdkmetric.NewView(
+	sdkmetric.Instrument{Name: "db.client.operation.duration"},
+	sdkmetric.Stream{
+		Name: "app.db.operation.duration",
+		Unit: "ms",
+		Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
+			Boundaries: []float64{1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000},
+		},
+	},
+)
 
 // dropOrphanClientSpans는 부모 없는 DB 클라이언트 span(hub가 150ms마다 하는 폴링)을 버린다.
 // 요청 처리 중에 생긴 DB span은 부모가 있으므로 ParentBased 쪽에서 그대로 기록된다.

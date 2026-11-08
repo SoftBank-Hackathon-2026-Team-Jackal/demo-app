@@ -57,7 +57,7 @@ DB 서버에 `app.node_name` 설정이 있으면 메시지의 `db_node`에 그 �
 |---|---|
 | 트레이스 | 요청마다 서버 span(이름은 `POST /api/messages` 같은 라우트)과 그 아래 DB span(`pool.acquire`, `query INSERT`…). DB span의 `server.address`로 원본 DB와 PgBouncer(`cmp-cutover`) 중 어디로 갔는지 보입니다 |
 | `http.server.request.duration` | 라우트(`http.route`)·상태 코드별 지연 히스토그램. 장애 스위치의 지연과 500도 여기에 잡힙니다 |
-| `db.client.operation.duration` | DB 쿼리 시간 |
+| `app.db.operation.duration` (ms) | DB 쿼리(`pgx_operation_type=query`)와 풀에서 연결을 얻는 시간(`acquire`). otelpgx v0.10이 단위를 잘못 선언해서(실제는 ms) 이름과 단위를 바로잡아 내보냅니다 |
 | `db.client.pool.*` | 커넥션 풀 사용·유휴 연결 수, 빈 풀 대기 횟수와 시간. DB 전환 중 PgBouncer PAUSE 동안 대기가 늘어나는 모습이 보입니다 |
 | `chat.messages.created` | 새로 저장된 메시지 수 |
 
