@@ -8,8 +8,10 @@ import (
 	"log"
 	"time"
 
+	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 //go:embed db/schema.sql
@@ -49,6 +51,14 @@ func newStore(ctx context.Context, url string) (*Store, error) {
 	// prepared statement를 쓰면 간헐적으로 실패한다. simple protocol로 고정한다.
 	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 	cfg.MaxConns = 10
+	// DB span에 server.address가 남아 원본 DB로 갔는지 PgBouncer(cmp-cutover)로 갔는지 보인다
+	cfg.ConnConfig.Tracer = otelpgx.NewTracer(
+		otelpgx.WithTrimSQLInSpanName(),
+		otelpgx.WithTracerAttributes(
+			attribute.String("server.address", cfg.ConnConfig.Host),
+			attribute.Int("server.port", int(cfg.ConnConfig.Port)),
+		),
+	)
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

@@ -1,0 +1,21 @@
+# 개발용 collector: 트레이스는 Jaeger로, 메트릭은 로그(debug)로 보낸다
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  debug:
+    verbosity: basic
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlp/jaeger]
+    metrics:
+      receivers: [otlp]
+      exporters: [debug]
