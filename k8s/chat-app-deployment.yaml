@@ -30,7 +30,7 @@ spec:
         envFrom:
         - configMapRef:
             name: chat-app-config
-        image: 714066696240.dkr.ecr.ap-northeast-2.amazonaws.com/cmp-demo-chat@sha256:3098f6be5a3e480400a782db0c0cfda16cb6af5fe000f95d4daa94489745fd7c
+        image: 714066696240.dkr.ecr.ap-northeast-2.amazonaws.com/cmp-demo-chat@sha256:a8dedd89461ec61b45f2fb2745fce385d9300f52fc3913a348a272ad70c15aa6
         name: app
         ports:
         - containerPort: 8080
