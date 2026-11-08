@@ -13,6 +13,14 @@ spec:
     - podSelector:
         matchLabels:
           app: chat-db
+  # 이전 플랫폼이 둔 PgBouncer(cmp-cutover). DB 전환 때 앱 연결이 이 주소로 바뀐다.
+  - ports:
+    - port: 6432
+      protocol: TCP
+    to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: cmp-cutover
   - ports:
     - port: 53
       protocol: UDP
